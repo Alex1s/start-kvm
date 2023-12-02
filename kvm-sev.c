@@ -16,6 +16,8 @@
 #define SEV_DEV "/dev/sev"
 #define GUEST_MEMORY_SIZE 4096
 
+#define MAX_MEASUREMENT_LEN 4096
+
 // this is real mode assembly ...
 static uint8_t guest_code[] = {
     0xB8, 0xAA, 0xAA, // mov $0xAAAA, %ax
@@ -98,19 +100,26 @@ static void dump_kvm_regs(struct kvm_regs regs)
 
 int main()
 {
-    int kvm_fd = 0, sev_fd = 0;
+    int kvm_fd = -1;
     int error = 0;
     int ret = 0;
     void *ret_ptr = NULL;
     void *guest_memory = NULL;
     size_t guest_memory_size = 0;
-    int vm_fd = 0;
+    int vm_fd = -1;
     int vcpu_mmap_size = 0;
     struct kvm_run *kvm_run = NULL;
     struct kvm_userspace_memory_region kvm_userspace_memory_region = {0};
-    int vcpu_fd = 0;
+    int vcpu_fd = -1;
     struct kvm_regs kvm_regs = {.rip = 0};
 	struct kvm_sregs kvm_sregs = {0};
+
+    int sev_fd = -1;
+    struct kvm_sev_cmd kvm_sev_cmd = {0};
+    struct kvm_sev_launch_start kvm_sev_launch_start = {0};
+    struct kvm_sev_launch_update_data kvm_sev_launch_update_data = {0};
+    struct kvm_sev_launch_measure kvm_sev_launch_measure = {0};
+    uint8_t measurement[MAX_MEASUREMENT_LEN];
 
     kvm_fd = open(KVM_DEV, O_RDONLY | O_CLOEXEC);
     if (kvm_fd == -1)
@@ -120,21 +129,13 @@ int main()
         goto error_after_null;
     }
 
-    sev_fd = open(SEV_DEV, O_RDONLY | O_CLOEXEC);
-    if (sev_fd == -1)
-    {
-        perror_extra(NULL);
-        error = 1;
-        goto error_after_open_kvm;
-    }
-
     guest_memory_size = GUEST_MEMORY_SIZE;
     ret_ptr = mmap(NULL, guest_memory_size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
     if (ret_ptr == MAP_FAILED)
     {
         perror_extra(NULL);
         error = 1;
-        goto error_after_open_sev;
+        goto error_after_open_kvm;
     }
     memcpy((void *__restrict) ret_ptr, (void *__restrict) guest_code, sizeof(guest_code));
     guest_memory = ret_ptr;
@@ -158,7 +159,32 @@ int main()
     {
         perror_extra(NULL);
         error = 1;
-        goto error_after_mmap_guest_memory;
+        goto error_after_kvm_create_vm;
+    }
+
+    sev_fd = open(SEV_DEV, O_RDONLY | O_CLOEXEC);
+    if (sev_fd == -1)
+    {
+        perror_extra(NULL);
+        error = 1;
+        goto error_after_kvm_create_vm;
+    }
+
+    // has to be issued before creating a vcpu
+    kvm_sev_cmd.id = KVM_SEV_INIT;
+    kvm_sev_cmd.sev_fd = sev_fd;
+    ret = ioctl(vm_fd, KVM_MEMORY_ENCRYPT_OP, &kvm_sev_cmd);
+    if (ret == -1)
+    {
+        perror_extra(NULL);
+        error = 1;
+        goto error_after_open_sev;
+    }
+    if (kvm_sev_cmd.error)
+    {
+        perror_extra("SEV error");
+        error = 1;
+        goto error_after_open_sev;
     }
 
     ret = ioctl(vm_fd, KVM_CREATE_VCPU, 0);
@@ -166,7 +192,7 @@ int main()
     {
         perror_extra(NULL);
         error = 1;
-        goto error_after_mmap_guest_memory;
+        goto error_after_open_sev;
     }
     vcpu_fd = ret;
 
@@ -213,6 +239,89 @@ int main()
     }
     kvm_run = ret_ptr;
 
+    kvm_sev_cmd.id = KVM_SEV_LAUNCH_START;
+    kvm_sev_cmd.data = (__u64) &kvm_sev_launch_start;
+    kvm_sev_cmd.sev_fd = sev_fd;
+    kvm_sev_launch_start.handle = 0; // create a new one
+    kvm_sev_launch_start.policy = 0; // i guess the default policy (implies no SEV-ES)
+    kvm_sev_launch_start.dh_uaddr = 0;
+    kvm_sev_launch_start.dh_len = 0;
+    kvm_sev_launch_start.session_uaddr = 0;
+    kvm_sev_launch_start.session_len = 0;
+    ret = ioctl(vm_fd, KVM_MEMORY_ENCRYPT_OP, &kvm_sev_cmd);
+    if (ret == -1)
+    {
+        perror_extra(NULL);
+        error = 1;
+        goto error_after_kvm_create_vcpu;
+    }
+    if (kvm_sev_cmd.error != 0)
+    {
+        perror_extra("SEV error");
+        error = 1;
+        goto error_after_kvm_create_vcpu;
+    }
+
+    kvm_sev_cmd.id = KVM_SEV_LAUNCH_UPDATE_DATA;
+    kvm_sev_cmd.data = (__u64) &kvm_sev_launch_update_data;
+    kvm_sev_cmd.sev_fd = sev_fd;
+    kvm_sev_launch_update_data.uaddr = (__u64) guest_memory;
+    kvm_sev_launch_update_data.len = guest_memory_size;
+    ret = ioctl(vm_fd, KVM_MEMORY_ENCRYPT_OP, &kvm_sev_cmd);
+    if (ret == -1)
+    {
+        perror_extra(NULL);
+        error = 1;
+        goto error_after_kvm_create_vcpu;
+    }
+    if (kvm_sev_cmd.error != 0)
+    {
+        perror_extra("SEV error");
+        error = 1;
+        goto error_after_kvm_create_vcpu;
+    }
+
+    kvm_sev_cmd.id = KVM_SEV_LAUNCH_MEASURE;
+    kvm_sev_cmd.data = (__u64) &kvm_sev_launch_measure;
+    kvm_sev_cmd.sev_fd = sev_fd;
+    kvm_sev_launch_measure.uaddr = (__u64) measurement;
+    kvm_sev_launch_measure.len = MAX_MEASUREMENT_LEN;
+    ret = ioctl(vm_fd, KVM_MEMORY_ENCRYPT_OP, &kvm_sev_cmd);
+    if (ret == -1)
+    {
+        perror_extra(NULL);
+        error = 1;
+        goto error_after_kvm_create_vcpu;
+    }
+    if (kvm_sev_cmd.error != 0)
+    {
+        perror_extra("SEV error");
+        error = 1;
+        goto error_after_kvm_create_vcpu;
+    }
+    if (kvm_sev_launch_measure.len > MAX_MEASUREMENT_LEN)
+    {
+        perror_extra("MAX_MEASUREMENT_LEN is too small");
+        error = 1;
+        goto error_after_kvm_create_vcpu;
+    }
+
+    kvm_sev_cmd.id = KVM_SEV_LAUNCH_FINISH;
+    kvm_sev_cmd.sev_fd = sev_fd;
+    ret = ioctl(vm_fd, KVM_MEMORY_ENCRYPT_OP, &kvm_sev_cmd);
+    if (ret == -1)
+    {
+        perror_extra(NULL);
+        error = 1;
+        goto error_after_kvm_create_vcpu;
+    }
+    if (kvm_sev_cmd.error != 0)
+    {
+        perror_extra("SEV error");
+        error = 1;
+        goto error_after_kvm_create_vcpu;
+    }
+
     ret = ioctl(vcpu_fd, KVM_RUN, 0);
     if (ret == -1)
     {
@@ -224,8 +333,14 @@ int main()
 
     if (kvm_run->exit_reason != KVM_EXIT_HLT)
     {
+        printf("kvm_run->exit_reason=%d\n", kvm_run->exit_reason);
         perror_extra("VM did not exit for reason KVM_EXIT_HLT");
         error = 1;
+        if (kvm_run->exit_reason == KVM_EXIT_FAIL_ENTRY)
+        {
+            printf("kvm_run->fail_entry.hardware_entry_failure_reason=%lld\n", kvm_run->fail_entry.hardware_entry_failure_reason);
+            printf("kvm_run->fail_entry.cpu=%d\n", kvm_run->fail_entry.cpu);
+        }
         goto error_after_kvm_run;
     }
 
@@ -264,7 +379,13 @@ int main()
     }
 
     error_after_kvm_create_vcpu:
-    close(vm_fd);
+    close(vcpu_fd);
+
+    error_after_kvm_create_vm:
+    if (close(vm_fd) == -1)
+    {
+        perror_extra(NULL);
+    }
 
     error_after_mmap_guest_memory:
     munmap((void *) kvm_userspace_memory_region.userspace_addr, guest_memory_size);
