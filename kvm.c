@@ -98,7 +98,7 @@ static void dump_kvm_regs(struct kvm_regs regs)
 
 int main()
 {
-    int kvm_fd = 0, sev_fd = 0;
+    int kvm_fd = 0;
     int error = 0;
     int ret = 0;
     void *ret_ptr = NULL;
@@ -120,21 +120,13 @@ int main()
         goto error_after_null;
     }
 
-    sev_fd = open(SEV_DEV, O_RDONLY | O_CLOEXEC);
-    if (sev_fd == -1)
-    {
-        perror_extra(NULL);
-        error = 1;
-        goto error_after_open_kvm;
-    }
-
     guest_memory_size = GUEST_MEMORY_SIZE;
     ret_ptr = mmap(NULL, guest_memory_size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
     if (ret_ptr == MAP_FAILED)
     {
         perror_extra(NULL);
         error = 1;
-        goto error_after_open_sev;
+        goto error_after_open_kvm;
     }
     memcpy((void *__restrict) ret_ptr, (void *__restrict) guest_code, sizeof(guest_code));
     guest_memory = ret_ptr;
@@ -268,12 +260,6 @@ int main()
 
     error_after_mmap_guest_memory:
     munmap((void *) kvm_userspace_memory_region.userspace_addr, guest_memory_size);
-
-    error_after_open_sev:
-    if (close(sev_fd) == -1)
-    {
-        perror_extra(NULL);
-    }
 
     error_after_open_kvm:
     if (close(kvm_fd) == -1)
