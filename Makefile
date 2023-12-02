@@ -1,21 +1,29 @@
 CC := gcc
 CFLAGS := -Wall -Werror -Wextra -std=gnu17 -pedantic
 
-TARGET := kvm
-SRC := kvm.c
+all: kvm kvm-sev
 
-all: $(TARGET)
-
-$(TARGET): $(SRC)
-	make clean
+kvm: kvm.c
 	$(CC) $(CFLAGS) -E -o $@.i $^
 	$(CC) $(CFLAGS) -o $@ $^
 	objdump -d $@ > $@.lss
 
-run: $(TARGET)
-	sudo ./$(TARGET)
+run: kvm
+	make clean
+	sudo ./$^
+
+kvm-sev: kvm-sev.c
+	$(CC) $(CFLAGS) -E -o $@.i $^
+	$(CC) $(CFLAGS) -o $@ $^
+	objdump -d $@ > $@.lss
+
+run-sev: kvm-sev
+	make clean
+	sudo ./$^
 
 .PHONY: all run clean
 
 clean:
-	rm -f $(TARGET) $(TARGET).lss $(TARGET).i
+	rm -f *.lss
+	rm -f *.i
+	rm -f kvm kvm-sev
