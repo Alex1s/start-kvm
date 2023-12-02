@@ -240,6 +240,14 @@ int main()
     if (kvm_regs.rax != 0xAAAA)
     {
         printf("kvm_regs.rax=%llx\n", kvm_regs.rax);
+        perror_extra("kvm_regs.rax!=0xAAAA\n");
+        error = 1;
+        goto error_after_kvm_run;
+    }
+    if (kvm_regs.rip != 0x4)
+    {
+        printf("kvm_regs.rip=%llx\n", kvm_regs.rip);
+        perror_extra("kvm_regs.rip!=0x4\n");
         error = 1;
         goto error_after_kvm_run;
     }
