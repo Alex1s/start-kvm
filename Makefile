@@ -21,6 +21,15 @@ kvm-sev: kvm-sev.c
 run-sev: kvm-sev
 	sudo ./$^
 
+kvm-sev-es: kvm-sev-es.c
+	make clean
+	$(CC) $(CFLAGS) -E -o $@.i $^
+	$(CC) $(CFLAGS) -o $@ $^
+	objdump -d $@ > $@.lss
+
+run-sev-es: kvm-sev-es
+	sudo ./$^
+
 .PHONY: all run clean
 
 clean:
