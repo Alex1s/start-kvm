@@ -9,19 +9,16 @@
 #include <sys/mman.h> // mmap
 #include <stdint.h> // uintptr_t
 
-#define STR_HELPER(x) #x
-#define STRINGIFY(x) STR_HELPER(x)
-
 #define KVM_DEV "/dev/kvm"
 #define SEV_DEV "/dev/sev"
 #define GUEST_MEMORY_SIZE 4096
 
 #define MAX_MEASUREMENT_LEN 4096
 
-// this is real mode assembly ...
+// the following is real mode assembly
 static uint8_t guest_code[GUEST_MEMORY_SIZE] __attribute__((aligned(GUEST_MEMORY_SIZE))) = {
     0xB8, 0xAA, 0xAA, // mov $0xAAAA, %ax
-    0xF4, // hlt
+    0xF4 // hlt
 };
 
 #define perror_extra(message) do { if (message == NULL) fprintf(stderr, "%s:%d (%s): %s\n", __FILE__, __LINE__, __func__, strerror(errno)); else fprintf(stderr, "%s:%d (%s): %s\n", __FILE__, __LINE__, __func__, (const char *)message);} while (0)
@@ -32,85 +29,6 @@ static uint8_t guest_code[GUEST_MEMORY_SIZE] __attribute__((aligned(GUEST_MEMORY
 #define KVM_SET_MEMORY_ATTRIBUTES              _IOW(KVMIO,  0xd3, struct kvm_memory_attributes)
 
 #define KVM_X86_SW_PROTECTED_VM	1
-
-/*
-extern void guest_code(void);
-__asm__(
-    ".align " STRINGIFY(GUEST_MEMORY_SIZE) "\n\t"
-    ".global guest_code\n\t"
-    "guest_code:\n\t"
-    ".byte 0xB8, 0xAA, 0xAA, 0xf4, 0xAA, 0xAA, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB\n\t"
-//    "mov $0xAAAAAAAAAAAAAAAA, %rax\n\t"
-//    "mov $0xBBBBBBBBBBBBBBBB, %rbx\n\t"
-    "jmp guest_code\n\t"
-    ".align " STRINGIFY(GUEST_MEMORY_SIZE) "\n\t"
-);
-*/
-
-/*
-static void dump_memory_hex(void *addr, int len)
-{
-    unsigned char *ptr = (unsigned char *)addr;
-    
-    for (int i = 0; i < len; i++) {
-        printf("%02X ", ptr[i]);
-        if ((i + 1) % 16 == 0) { // Print 16 bytes per line
-            //printf("");
-        }
-    }
-    printf("\n");
-}
-*/
-
-/*
-static void dump_segment(const char *name, struct kvm_segment *seg)
-{
-    printf("%s: base=0x%llx limit=0x%x selector=0x%x type=0x%x present=0x%x dpl=0x%x db=0x%x s=0x%x l=0x%x g=0x%x avl=0x%x unusable=0x%x\n",
-           name, seg->base, seg->limit, seg->selector, seg->type, seg->present, seg->dpl, seg->db, seg->s, seg->l, seg->g, seg->avl, seg->unusable);
-}
-*/
-
-/*
-static void dump_kvm_sregs(struct kvm_sregs *sregs)
-{
-    dump_segment("CS", &sregs->cs);
-    dump_segment("DS", &sregs->ds);
-    dump_segment("ES", &sregs->es);
-    dump_segment("FS", &sregs->fs);
-    dump_segment("GS", &sregs->gs);
-    dump_segment("SS", &sregs->ss);
-    dump_segment("TR", &sregs->tr);
-    dump_segment("LDT", &sregs->ldt);
-
-    printf("GDT: base=0x%llx limit=0x%x\n", sregs->gdt.base, sregs->gdt.limit);
-    printf("IDT: base=0x%llx limit=0x%x\n", sregs->idt.base, sregs->idt.limit);
-
-    printf("CR0=0x%llx CR2=0x%llx CR3=0x%llx CR4=0x%llx CR8=0x%llx\n",
-           sregs->cr0, sregs->cr2, sregs->cr3, sregs->cr4, sregs->cr8);
-
-    printf("EFER=0x%llx APIC_BASE=0x%llx\n", sregs->efer, sregs->apic_base);
-
-    // Dump interrupt bitmap (skipping for brevity)
-}
-*/
-
-/*
-static void dump_kvm_regs(struct kvm_regs regs)
-{
-    printf("RAX=%016llx RBX=%016llx RCX=%016llx RDX=%016llx\n", regs.rax, regs.rbx, regs.rcx, regs.rdx);
-    printf("RSI=%016llx RDI=%016llx RBP=%016llx RSP=%016llx\n", regs.rsi, regs.rdi, regs.rbp, regs.rsp);
-    printf("R8 =%016llx R9 =%016llx R10=%016llx R11=%016llx\n", regs.r8, regs.r9, regs.r10, regs.r11);
-    printf("R12=%016llx R13=%016llx R14=%016llx R15=%016llx\n", regs.r12, regs.r13, regs.r14, regs.r15);
-    printf("RIP=%016llx RFL=%08llx\n", regs.rip, regs.rflags);
-}
-*/
-
-// SEV COMMANDS executed by qemu:
-// 22 = KVM_SEV_SNP_INIT
-// 23 = KVM_SEV_SNP_LAUNCH_START
-// 24 (6 times) = KVM_SEV_SNP_LAUNCH_UPDATE
-// 25 = KVM_SEV_SNP_LAUNCH_FINISH
-// thats all!
 
 int main()
 {
@@ -146,7 +64,12 @@ int main()
         goto error_after_null;
     }
 
-    ret = ioctl(kvm_fd, KVM_CREATE_VM, KVM_X86_SW_PROTECTED_VM | KVM_X86_SNP_VM); // possible values in 6.6.0-rc1: KVM_X86_DEFAULT_VM, KVM_X86_SW_PROTECTED_VM, KVM_X86_SNP_VM
+    // possible machine type identifiers for x86:
+    // #define KVM_X86_DEFAULT_VM	0
+    // #define KVM_X86_SW_PROTECTED_VM	1
+    // #define KVM_X86_SNP_VM		3
+    // NOTE how KVM_X86_SNP_VM implies KVM_X86_SW_PROTECTED_VM
+    ret = ioctl(kvm_fd, KVM_CREATE_VM, KVM_X86_SNP_VM);
     if (ret == -1)
     {
         perror_extra(NULL);
@@ -164,7 +87,8 @@ int main()
         goto error_after_open_kvm;
     }
     memcpy((void *__restrict) ret_ptr, (void *__restrict) guest_code, sizeof(guest_code));
-    guest_memory = ret_ptr;
+    //guest_memory = ret_ptr;
+    guest_memory = guest_code;
 
     ret = ioctl(vm_fd, KVM_GET_SUPPORTED_MEMORY_ATTRIBUTES, &supported_memory_attributes);
     if (ret == -1)
