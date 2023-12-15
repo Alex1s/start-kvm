@@ -19,12 +19,19 @@
 #define MAX_MEASUREMENT_LEN 4096
 
 // this is real mode assembly ...
-static uint8_t guest_code[] = {
+static uint8_t guest_code[GUEST_MEMORY_SIZE] __attribute__((aligned(GUEST_MEMORY_SIZE))) = {
     0xB8, 0xAA, 0xAA, // mov $0xAAAA, %ax
     0xF4, // hlt
 };
 
 #define perror_extra(message) do { if (message == NULL) fprintf(stderr, "%s:%d (%s): %s\n", __FILE__, __LINE__, __func__, strerror(errno)); else fprintf(stderr, "%s:%d (%s): %s\n", __FILE__, __LINE__, __func__, (const char *)message);} while (0)
+
+
+// src: /usr/src/linux-headers-6.6.0-rc1-snp-host-5a170ce1a082/include/uapi/linux/kvm.h:2379
+#undef KVM_SET_MEMORY_ATTRIBUTES
+#define KVM_SET_MEMORY_ATTRIBUTES              _IOW(KVMIO,  0xd3, struct kvm_memory_attributes)
+
+#define KVM_X86_SW_PROTECTED_VM	1
 
 /*
 extern void guest_code(void);
@@ -98,6 +105,13 @@ static void dump_kvm_regs(struct kvm_regs regs)
 }
 */
 
+// SEV COMMANDS executed by qemu:
+// 22 = KVM_SEV_SNP_INIT
+// 23 = KVM_SEV_SNP_LAUNCH_START
+// 24 (6 times) = KVM_SEV_SNP_LAUNCH_UPDATE
+// 25 = KVM_SEV_SNP_LAUNCH_FINISH
+// thats all!
+
 int main()
 {
     int kvm_fd = -1;
@@ -115,6 +129,7 @@ int main()
 	struct kvm_sregs kvm_sregs = {0};
 
     int sev_fd = -1;
+    uint64_t supported_memory_attributes = -1;
     struct kvm_sev_cmd kvm_sev_cmd = {0};
     struct kvm_snp_init kvm_snp_init = {0};
     struct kvm_sev_snp_launch_start kvm_sev_snp_launch_start = {0};
@@ -131,7 +146,7 @@ int main()
         goto error_after_null;
     }
 
-    ret = ioctl(kvm_fd, KVM_CREATE_VM, 0);
+    ret = ioctl(kvm_fd, KVM_CREATE_VM, KVM_X86_SW_PROTECTED_VM | KVM_X86_SNP_VM); // possible values in 6.6.0-rc1: KVM_X86_DEFAULT_VM, KVM_X86_SW_PROTECTED_VM, KVM_X86_SNP_VM
     if (ret == -1)
     {
         perror_extra(NULL);
@@ -151,7 +166,35 @@ int main()
     memcpy((void *__restrict) ret_ptr, (void *__restrict) guest_code, sizeof(guest_code));
     guest_memory = ret_ptr;
 
-    struct kvm_create_guest_memfd kvm_create_guest_memfd = {.size = guest_memory_size, .flags = 0};
+    ret = ioctl(vm_fd, KVM_GET_SUPPORTED_MEMORY_ATTRIBUTES, &supported_memory_attributes);
+    if (ret == -1)
+    {
+        perror_extra(NULL);
+        error = 1;
+        goto error_after_kvm_create_vm;
+    }
+    printf("KVM_GET_SUPPORTED_MEMORY_ATTRIBUTES: %lu (KVM_MEMORY_ATTRIBUTE_PRIVATE: %llu)\n", supported_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE);
+    if (!(supported_memory_attributes & KVM_MEMORY_ATTRIBUTE_PRIVATE))
+    {
+        perror_extra("VM does not support KVM_MEMORY_ATTRIBUTE_PRIVATE");
+        error = 1;
+        goto error_after_kvm_create_vm;
+    }
+
+    struct kvm_memory_attributes kvm_memory_attributes = {
+        .address = 0,
+        .size = guest_memory_size,
+        .attributes = KVM_MEMORY_ATTRIBUTE_PRIVATE
+    };
+    ret = ioctl(vm_fd, KVM_SET_MEMORY_ATTRIBUTES, &kvm_memory_attributes);
+    if (ret == -1)
+    {
+        perror_extra(NULL);
+        error = 1;
+        goto error_after_kvm_create_vm;
+    }
+
+    struct kvm_create_guest_memfd kvm_create_guest_memfd = {.size = guest_memory_size, .flags = 0}; // possible flags: 0, KVM_GUEST_MEMFD_ALLOW_HUGEPAGE
     ret = ioctl(vm_fd, KVM_CREATE_GUEST_MEMFD, &kvm_create_guest_memfd);
     if (ret == -1)
     {
@@ -166,20 +209,11 @@ int main()
     kvm_userspace_memory_region2.userspace_addr = (uintptr_t) guest_memory;
     kvm_userspace_memory_region2.gmem_offset = 0;
     kvm_userspace_memory_region2.gmem_fd = guest_memfd;
+    // possible flags: KVM_MEM_LOG_DIRTY_PAGES = 1, KVM_MEM_READONLY = 2 and KVM_MEM_PRIVATE = 4
+    kvm_userspace_memory_region2.flags = KVM_MEM_PRIVATE | KVM_MEM_READONLY; // this is what QEMU uses for page type NORMAL
+    kvm_userspace_memory_region2.slot = 0;
+    printf("KVM_SET_USER_MEMORY_REGION2=0x%lx\n", KVM_SET_USER_MEMORY_REGION2);
     ret = ioctl(vm_fd, KVM_SET_USER_MEMORY_REGION2, &kvm_userspace_memory_region2);
-    if (ret == -1)
-    {
-        perror_extra(NULL);
-        error = 1;
-        goto error_after_kvm_create_vm;
-    }
-
-    struct kvm_memory_attributes kvm_memory_attributes = {
-        .address = 0,
-        .size = guest_memory_size,
-        .attributes = KVM_MEMORY_ATTRIBUTE_PRIVATE
-    };
-    ret = ioctl(vm_fd, KVM_SET_MEMORY_ATTRIBUTES, &kvm_memory_attributes);
     if (ret == -1)
     {
         perror_extra(NULL);
@@ -268,7 +302,9 @@ int main()
     kvm_sev_cmd.id = KVM_SEV_SNP_LAUNCH_START;
     kvm_sev_cmd.data = (__u64) &kvm_sev_snp_launch_start;
     kvm_sev_cmd.sev_fd = sev_fd;
-    kvm_sev_snp_launch_start.policy = (1 << 17) | (1 << 19) | (1 << 16);
+    //kvm_sev_snp_launch_start.policy = (1 << 17) | (1 << 19) | (1 << 16);
+    kvm_sev_snp_launch_start.policy = (1 << 17) | (1 << 16); // this is the same as qemu uses
+    printf("kvm_sev_snp_launch_start policy 0x%llx\n", kvm_sev_snp_launch_start.policy);
     ret = ioctl(vm_fd, KVM_MEMORY_ENCRYPT_OP, &kvm_sev_cmd);
     if (ret == -1)
     {
@@ -305,7 +341,8 @@ int main()
     }
 
     kvm_sev_cmd.id = KVM_SEV_LAUNCH_UPDATE_VMSA;
-    ret = ioctl(vm_fd, KVM_MEMORY_ENCRYPT_OP, &kvm_sev_cmd);
+    kvm_sev_cmd.data = 0;
+    //ret = ioctl(vm_fd, KVM_MEMORY_ENCRYPT_OP, &kvm_sev_cmd);
     if (ret == -1)
     {
         perror_extra(NULL);
@@ -324,7 +361,7 @@ int main()
     kvm_sev_cmd.sev_fd = sev_fd;
     kvm_sev_launch_measure.uaddr = (__u64) measurement;
     kvm_sev_launch_measure.len = MAX_MEASUREMENT_LEN;
-    ret = ioctl(vm_fd, KVM_MEMORY_ENCRYPT_OP, &kvm_sev_cmd);
+    //ret = ioctl(vm_fd, KVM_MEMORY_ENCRYPT_OP, &kvm_sev_cmd);
     if (ret == -1)
     {
         perror_extra(NULL);
@@ -344,7 +381,7 @@ int main()
         goto error_after_kvm_create_vcpu;
     }
 
-    kvm_sev_cmd.id = KVM_SEV_LAUNCH_FINISH;
+    kvm_sev_cmd.id = KVM_SEV_SNP_LAUNCH_FINISH;
     kvm_sev_cmd.sev_fd = sev_fd;
     ret = ioctl(vm_fd, KVM_MEMORY_ENCRYPT_OP, &kvm_sev_cmd);
     if (ret == -1)
