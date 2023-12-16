@@ -1,4 +1,6 @@
 CC := gcc
+# KERNEL_VERSION := 6.6.0-rc1
+# CFLAGS := -I/usr/src/linux-headers-$(KERNEL_VERSION)-snp-host-5a170ce1a082/include/uapi -Wall -Werror -Wextra -std=gnu17 -pedantic
 CFLAGS := -Wall -Werror -Wextra -std=gnu17 -pedantic
 
 all: kvm kvm-sev
@@ -10,6 +12,15 @@ kvm: kvm.c
 	objdump -d $@ > $@.lss
 
 run: kvm
+	sudo ./$^
+
+kvm-protected: kvm-protected.c
+	make clean
+	$(CC) $(CFLAGS) -E -o $@.i $^
+	$(CC) $(CFLAGS) -o $@ $^
+	objdump -d $@ > $@.lss
+
+run-protected: kvm-protected
 	sudo ./$^
 
 kvm-sev: kvm-sev.c
