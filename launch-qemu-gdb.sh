@@ -19,7 +19,7 @@ silent
 python
 sev_cmd_id = gdb.selected_frame().read_var('input')['id']
 print("input.id = ", end='')
-if sev_cmd_id == 22: # KVM_SEV_SNP_INIT
+if sev_cmd_id == 22:
     print("KVM_SEV_SNP_INIT")
     gdb.execute("print *((struct kvm_snp_init *) input.data)")
 elif sev_cmd_id == 23:
