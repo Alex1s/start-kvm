@@ -1,7 +1,1 @@
-/*.i
-/*.lss
-/kvm
-/kvm-sev
-/kvm-sev-es
 /kvm-sev-snp
-/kvm-protected
