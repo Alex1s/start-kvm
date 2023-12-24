@@ -9,6 +9,8 @@
 #include <sys/mman.h> // mmap
 #include <stdint.h> // uintptr_t
 
+#include "sev_snp_helper/sev_snp_helper.h"
+
 #define KVM_DEV "/dev/kvm"
 #define SEV_DEV "/dev/sev"
 
@@ -30,6 +32,7 @@ static uint8_t guest_code[GUEST_MEMORY_SIZE] __attribute__((aligned(GUEST_MEMORY
 
 int main()
 {
+    int sev_snp_helper_fd = -1;
     int kvm_fd = -1;
     int error = 0;
     int ret = 0;
@@ -50,12 +53,20 @@ int main()
     struct kvm_sev_snp_launch_start kvm_sev_snp_launch_start = {0};
     struct kvm_sev_snp_launch_update kvm_sev_snp_launch_update = {0};
 
+    sev_snp_helper_fd = open(SEV_SNP_HELPER_DEV, O_RDONLY | O_CLOEXEC);
+    if (sev_snp_helper_fd == -1)
+    {
+        perror_extra(NULL);
+        error = 1;
+        goto error_after_null;
+    }
+
     kvm_fd = open(KVM_DEV, O_RDONLY | O_CLOEXEC);
     if (kvm_fd == -1)
     {
         perror_extra(NULL);
         error = 1;
-        goto error_after_null;
+        goto error_after_open_sev_snp_helper;
     }
 
     // possible machine type identifiers for x86:
@@ -263,6 +274,21 @@ int main()
         goto error_after_mmap_vcpu;
     }
 
+    // before we start the VM, lets get the physical address of our ONLY VM page
+    struct sev_snp_helper_get_phys_addr sev_snp_helper_get_phys_addr = { // TODO: move up to declarations ...
+        .kvm_fd = kvm_fd,
+        .slot = kvm_userspace_memory_region2.slot,
+        .phys_addr = 0 // output
+    };
+    ret = ioctl(sev_snp_helper_fd, SEV_SNP_HELPER_GET_PHYS_ADDR, sev_snp_helper_get_phys_addr);
+    if (ret == -1)
+    {
+        perror_extra(NULL);
+        error = 1;
+        goto error_after_mmap_vcpu;
+    }
+    printf("VM physical address: %llx\n", sev_snp_helper_get_phys_addr.phys_addr);
+
     ret = ioctl(vcpu_fd, KVM_RUN, 0);
     if (ret == -1)
     {
@@ -339,6 +365,12 @@ int main()
 
     error_after_open_kvm:
     if (close(kvm_fd) == -1)
+    {
+        perror_extra(NULL);
+    }
+
+    error_after_open_sev_snp_helper:
+    if (close(sev_snp_helper_fd) == -1)
     {
         perror_extra(NULL);
     }

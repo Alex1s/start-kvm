@@ -48,6 +48,7 @@ kvm-sev-snp: kvm-sev-snp.c
 	objdump -d $@ > $@.lss
 
 run-sev-snp: kvm-sev-snp
+	cd sev_snp_helper && make
 	sudo ./$^
 
 .PHONY: all run clean
