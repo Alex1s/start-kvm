@@ -13,5 +13,5 @@ kvm-sev-snp: kvm-sev-snp.c
 
 clean:
 	make -C sev_snp_helper clean
-	rm sev_snp_helper/Module.symvers
+	rm -f sev_snp_helper/Module.symvers
 	rm -f kvm-sev-snp

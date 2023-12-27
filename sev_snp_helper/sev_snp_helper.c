@@ -47,6 +47,9 @@ static long __sev_snp_helper_ioctl_get_phys_addr(struct sev_snp_helper_get_phys_
     int as_ids, ids;  // for iterating
     int num_non_empty_as_0;
 
+    sev_snp_helper_pr_info("KVM_MAX_NR_ADDRESS_SPACES: %d\n", KVM_MAX_NR_ADDRESS_SPACES);  // previously known as KVM_ADDRESS_SPACE_NUM
+    sev_snp_helper_pr_info("sizeof(struct kvm_memslots): %lx\n", sizeof(struct kvm_memslots));
+    sev_snp_helper_pr_info("4 * sizeof(struct kvm_memslots): %lx\n", 4 * sizeof(struct kvm_memslots));
     as_id = sev_snp_helper_get_phys_addr->slot >> 16;
     id = (u16)sev_snp_helper_get_phys_addr->slot;
 
@@ -61,6 +64,19 @@ static long __sev_snp_helper_ioctl_get_phys_addr(struct sev_snp_helper_get_phys_
 
     kvm = file_kvm->private_data;
     sev_snp_helper_pr_info("kvm: %px", kvm);
+
+    sev_snp_helper_pr_info("kvm->mm: %px", kvm->mm);
+    sev_snp_helper_pr_info("current->mm: %px", current->mm);
+
+    sev_snp_helper_pr_info("kvm->memslots[0]: %px\n", kvm->memslots[0]);
+    sev_snp_helper_pr_info("kvm->memslots[1]: %px\n", kvm->memslots[1]);
+    sev_snp_helper_pr_info("__kvm_memslots(kvm, as_id): %px\n", __kvm_memslots(kvm, as_id));
+
+    kvm_memslots = __kvm_memslots(kvm, as_id);
+    
+    sev_snp_helper_pr_info("kvm_memslots->generation: %llu\n", kvm_memslots->generation);
+
+    sev_snp_helper_pr_info("id_to_memslot(kvm_memslots, id): %px\n",  id_to_memslot(kvm_memslots, id));
 
     if (kvm->memslots[0] == NULL && kvm->memslots[0] == NULL)
     {
