@@ -3,8 +3,14 @@ LINUX_HOST_PATH ?= /mnt/data/AMDSEV-DOCKER/AMDSEV/linux/host/
 .PHONY: clean patch load
 
 load: build/arch/x86/kvm/kvm-amd.ko
-	sudo modprobe -r kvm_amd  # unload
-	sudo modprobe build/arch/x86/kvm/kvm-amd.ko  # load
+	sudo modprobe -r kvm_amd
+	sudo modprobe -r ccp; sudo modprobe -r kvm
+	sudo modprobe -r rng_core; sudo modprobe -r irqbypass
+
+	sudo modprobe rng_core; sudo modprobe irqbypass
+	sudo modprobe ccp; sudo modprobe kvm
+
+	sudo insmod ./build/arch/x86/kvm/kvm-amd.ko
 
 build/arch/x86/kvm/kvm-amd.ko: patch
 	make -C /mnt/data/AMDSEV-DOCKER/AMDSEV/linux/host/ M=$(PWD)/build/arch/x86/kvm

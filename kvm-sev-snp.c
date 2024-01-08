@@ -9,7 +9,7 @@
 #include <sys/mman.h> // mmap
 #include <stdint.h> // uintptr_t
 
-#include "snp_helper/snp_helper.h"
+#include "snp_helper/patch/arch/x86/kvm/svm/snp_helper.h"
 
 #define KVM_DEV "/dev/kvm"
 #define SEV_DEV "/dev/sev"
@@ -51,7 +51,7 @@ int main()
     struct kvm_snp_init kvm_snp_init = {0};
     struct kvm_sev_snp_launch_start kvm_sev_snp_launch_start = {0};
     struct kvm_sev_snp_launch_update kvm_sev_snp_launch_update = {0};
-    struct snp_helper_get_phys_addr snp_helper_get_phys_addr = {0};
+    struct snp_helper_gfn_to_pfn snp_helper_gfn_to_pfn = {0};
 
     kvm_fd = open(KVM_DEV, O_RDONLY | O_CLOEXEC);
     if (kvm_fd == -1)
@@ -267,12 +267,12 @@ int main()
     }
 
     // before we start the VM, lets get the physical address of our ONLY VM page
-    kvm_sev_cmd.id = SEV_SNP_HELPER_GET_PHYS_ADDR;
-    kvm_sev_cmd.data = (__u64) &snp_helper_get_phys_addr;
+    kvm_sev_cmd.id = SNP_HELPER_GFN_TO_PFN;
+    kvm_sev_cmd.data = (__u64) &snp_helper_gfn_to_pfn;
     kvm_sev_cmd.sev_fd = sev_fd;
-    snp_helper_get_phys_addr.slot = kvm_userspace_memory_region2.slot;
-    snp_helper_get_phys_addr.phys_addr = 0; // output
-    ret = ioctl(sev_fd, KVM_MEMORY_ENCRYPT_OP, &kvm_sev_cmd);
+    snp_helper_gfn_to_pfn.gfn = kvm_sev_snp_launch_update.start_gfn;
+    snp_helper_gfn_to_pfn.pfn = 0;  // output
+    ret = ioctl(vm_fd, KVM_MEMORY_ENCRYPT_OP, &kvm_sev_cmd);
     if (ret == -1)
     {
         perror_extra(NULL);
@@ -285,7 +285,7 @@ int main()
         error = 1;
         goto error_after_mmap_vcpu;
     }
-    printf("VM physical address: %llx\n", snp_helper_get_phys_addr.phys_addr);
+    printf("VM physical address: 0x%llx Byte (%f GiB)\n", snp_helper_gfn_to_pfn.pfn << 12, ((double) (snp_helper_gfn_to_pfn.pfn << 12)) / (1024 * 1024 * 1024));
 
     ret = ioctl(vcpu_fd, KVM_RUN, 0);
     if (ret == -1)

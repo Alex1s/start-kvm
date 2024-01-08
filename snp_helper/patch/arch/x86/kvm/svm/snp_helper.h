@@ -1,10 +1,10 @@
 #pragma once
 
 // https://www.kernel.org/doc/html/latest/driver-api/ioctl.html#command-number-definitions
-#define SEV_SNP_HELPER_GET_PHYS_ADDR 0xFFFFA0
+#define SNP_HELPER_GFN_TO_PFN 0xFFFFA0
 
 // https://www.kernel.org/doc/html/latest/driver-api/ioctl.html#structure-layout
-struct snp_helper_get_phys_addr {
-    __u32 slot;
-    __u64 phys_addr;
+struct snp_helper_gfn_to_pfn {
+    __u64 gfn;
+    __u64 pfn;
 };

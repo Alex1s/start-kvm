@@ -2523,8 +2523,8 @@ int sev_mem_enc_ioctl(struct kvm *kvm, void __user *argp)
 	case KVM_SEV_SNP_SET_CERTS:
 		r = snp_set_instance_certs(kvm, &sev_cmd);
 		break;
-	case SEV_SNP_HELPER_GET_PHYS_ADDR:
-		r = snp_helper_get_phys_addr(kvm, &sev_cmd);
+	case SNP_HELPER_GFN_TO_PFN:
+		r = snp_helper_gfn_to_pfn(kvm, &sev_cmd);
 		break;
 	default:
 		r = -EINVAL;
