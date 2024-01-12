@@ -11,6 +11,88 @@
 #define snp_helper_pr_info pr_info
 #define snp_helper_pr_debug snp_helper_pr_info
 
+// based on /mnt/data/AMDSEV-DOCKER/AMDSEV/linux/host/arch/x86/virt/svm/sev.c
+// changes: does not restore direct map or invalidate direct map
+static int rmpupdate(u64 pfn, struct rmp_state *val)
+{
+	unsigned long paddr = pfn << PAGE_SHIFT;
+	int ret, level, npages;
+	int attempts = 0;
+
+	if (!cpu_feature_enabled(X86_FEATURE_SEV_SNP))
+		return -ENXIO;
+
+	level = RMP_TO_X86_PG_LEVEL(val->pagesize);
+	npages = page_level_size(level) / PAGE_SIZE;
+
+	/*
+	 * If page is getting assigned in the RMP table then unmap it from the
+	 * direct map if it is for a guest or mark it readonly if making into
+	 * a firmware page (ASID == 0).
+	 */
+	// if (val->assigned) {
+	// 	if (val->asid) {
+	// 		if (invalidate_direct_map(pfn, npages)) {
+	// 			pr_err("Failed to unmap %d pages at pfn 0x%llx from the direct_map\n",
+	// 			       npages, pfn);
+	// 			return -EFAULT;
+	// 		}
+	// 	} else {
+	// 		if (readonly_direct_map(pfn, npages)) {
+	// 			pr_err("Failed to make %d pages readonly at pfn 0x%llx in the direct_map\n",
+	// 			       npages, pfn);
+	// 			return -EFAULT;
+	// 		}
+	// 	}
+	// }
+
+	do {
+		/* Binutils version 2.36 supports the RMPUPDATE mnemonic. */
+		asm volatile(".byte 0xF2, 0x0F, 0x01, 0xFE"
+			     : "=a"(ret)
+			     : "a"(paddr), "c"((unsigned long)val)
+			     : "memory", "cc");
+
+		attempts++;
+	} while (ret == RMPUPDATE_FAIL_OVERLAP);
+
+	if (ret) {
+		pr_err("RMPUPDATE failed after %d attempts, ret: %d, pfn: %llx, npages: %d, level: %d\n",
+		       attempts, ret, pfn, npages, level);
+		sev_dump_rmpentry(pfn);
+		dump_stack();
+		return -EFAULT;
+	}
+
+	/*
+	 * Restore the direct map after the page is removed from the RMP table.
+	 */
+	// if (!val->assigned) {
+	// 	if (restore_direct_map(pfn, npages)) {
+	// 		pr_err("Failed to map %d pages at pfn 0x%llx into the direct_map\n",
+	// 		       npages, pfn);
+	// 		return -EFAULT;
+	// 	}
+	// }
+
+	return 0;
+}
+
+// from /mnt/data/AMDSEV-DOCKER/AMDSEV/linux/host/arch/x86/virt/svm/sev.c rmp_make_shared
+// changes: calls our custom rmpupdate which does not restore direct map or invalidate direct map
+/*
+ * Transition a page to hypervisor/shared state using the RMPUPDATE instruction.
+ */
+int rmp_make_shared_no_restore_direct_map(u64 pfn, enum pg_level level)
+{
+	struct rmp_state val;
+
+	memset(&val, 0, sizeof(val));
+	val.pagesize = X86_TO_RMP_PG_LEVEL(level);
+
+	return rmpupdate(pfn, &val);
+}
+
 // based on /mnt/data/AMDSEV-DOCKER/AMDSEV/linux/host/arch/x86/virt/svm/sev.c sev_dump_rmpentry
 static void sev_dump_rmpentry_fancy(u64 dumped_pfn)
 {
@@ -74,9 +156,15 @@ static void sev_dump_rmpentry_fancy(u64 dumped_pfn)
 		dumped_pfn);
 }
 
+#include <asm/sev-common.h>  // RMP_TO_X86_PG_LEVEL
+
 static void change_rmp_entry(u64 pfn)
 {
     void *page;
+    struct rmpentry rmpentry;
+    int level;
+    int ret;
+
     page = kmalloc(PAGE_SIZE, GFP_KERNEL);
     if (!page)
     {
@@ -91,10 +179,26 @@ static void change_rmp_entry(u64 pfn)
     }
 
     snp_helper_pr_info("A non VM page rmp entry for comparison:\n");  // they are ALL ZERO
-    sev_dump_rmpentry_fancy(virt_to_phys(page) >> PAGE_SHIFT);
+    sev_dump_rmpentry(virt_to_phys(page) >> PAGE_SHIFT);
     kfree(page);
 
     snp_helper_pr_info("Now the vm page:\n");
+    sev_dump_rmpentry(pfn);
+
+    ret = __snp_lookup_rmpentry(pfn, &rmpentry, &level);
+    if (ret)
+    {
+        snp_helper_pr_err("__snp_lookup_rmpentry: %d\n", ret);
+        return;
+    }
+    if (level != PG_LEVEL_4K)
+    {
+        snp_helper_pr_err("vm page is not 4K, thus it has to bee 2M\n");
+        return;
+    }
+    rmp_make_shared(pfn, level);
+
+    snp_helper_pr_info("Now the vm page AFTER UPDATE:\n");
     sev_dump_rmpentry_fancy(pfn);
 }
 
