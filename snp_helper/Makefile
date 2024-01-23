@@ -4,7 +4,7 @@ LINUX_HOST_PATH ?= /mnt/data/AMDSEV-DOCKER/AMDSEV/linux/host/
 
 load: unload build/arch/x86/kvm/kvm-amd.ko
 	sudo modprobe rng_core; sudo modprobe irqbypass
-	sudo modprobe ccp; sudo modprobe kvm
+	sudo modprobe ccp; sudo insmod ./build/arch/x86/kvm/kvm.ko
 
 	sudo insmod ./build/arch/x86/kvm/kvm-amd.ko
 
