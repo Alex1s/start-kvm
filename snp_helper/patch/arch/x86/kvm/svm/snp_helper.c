@@ -6,6 +6,7 @@
 
 #include "snp_helper.h"
 #include "local_symbols.h"
+#include <asm/sev-host.h> // rmp_make_shared
 
 #define snp_helper_pr_err pr_err
 #define snp_helper_pr_info pr_info
@@ -91,7 +92,7 @@ static int __snp_helper_gfn_to_pfn(struct kvm *kvm, struct snp_helper_gfn_to_pfn
     return 0;
 }
 
-static int snp_helper_gfn_to_pfn(struct kvm *kvm, struct kvm_sev_cmd *sev_cmd)
+int snp_helper_gfn_to_pfn(struct kvm *kvm, struct kvm_sev_cmd *sev_cmd)
 {
     int ret;
     struct snp_helper_gfn_to_pfn snp_helper_gfn_to_pfn;

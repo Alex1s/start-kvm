@@ -4138,87 +4138,51 @@ void print_error_bits(u64 error_code) {
         pr_info("  PFERR_NESTED_GUEST_PAGE\n");
 }
 
+static noinstr void __svm_sev_es_vcpu_run_wrapper(struct vcpu_svm *svm, bool spec_ctrl_intercepted)
+{
+	asm volatile (
+        "call __svm_sev_es_vcpu_run"
+        :
+        : "D" (svm), /* RDI */ "S" (spec_ctrl_intercepted) /* RSI */
+        : "memory"
+    );
+}
+
 static noinstr void svm_vcpu_enter_exit(struct kvm_vcpu *vcpu, bool spec_ctrl_intercepted)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
-
-	struct vmcb *vmcb_backup;
-	size_t i;
-
-	u32 reason;
-	u64 info1, info2;
-	u32 intr_info, error_code;
-
-	vmcb_backup = kmalloc(sizeof(*vmcb_backup), GFP_KERNEL);
-	if (!vmcb_backup)
-	{
-		pr_err("Unable to alloc space for vmcb_backup\n");
-		return;
-	}
-
-	memcpy(vmcb_backup, svm->current_vmcb->ptr, sizeof(*vmcb_backup));
 
 	guest_state_enter_irqoff();
 
 	amd_clear_divider();
 
-	if (sev_es_guest(vcpu->kvm)) {
-		for (i = 0; i < 5; i++)
+	if (sev_es_guest(vcpu->kvm))
+	{
+		__svm_sev_es_vcpu_run_wrapper(svm, spec_ctrl_intercepted);
+		switch (svm->vmcb->control.exit_code)
 		{
-			// load backup
-			memcpy(svm->current_vmcb->ptr, vmcb_backup, sizeof(*vmcb_backup));
-
-			pr_info("snp_helper/patch/arch/x86/kvm/svm/svm.c svm_vcpu_enter_exit: calling  __svm_sev_es_vcpu_run now for the %lu time ...", i + 1);
-			__svm_sev_es_vcpu_run(svm, spec_ctrl_intercepted);
-			svm_get_exit_info(vcpu, &reason, &info1, &info2, &intr_info, &error_code);
-			//dump_stack();
-
-			pr_info("\treason: 0x%x\n", reason);
-			pr_info("\tinfo1: 0x%llx\n", info1);
-			pr_info("\tinfo2: 0x%llx\n", info2);
-			pr_info("\tintr_info: 0x%x\n", intr_info);
-			pr_info("\terror_code: 0x%x\n", error_code);
-
-			switch (svm->vmcb->control.exit_code)
-			{
-				case SVM_EXIT_NPF: // nested page fault?
-					// see 15.8.4 Nested and intercepted #PF for more information
-					pr_info("snp_helper/patch/arch/x86/kvm/svm/svm.c svm_vcpu_enter_exit: svm->vmcb->control.exit_code: SVM_EXIT_NPF\n");
-					pr_info("guest physical address: %llx", info2); // 15.25.6 Nested versus Guest Page Faults, Fault Ordering
-					print_error_bits(info1);
-					trace_kvm_page_fault(vcpu, info2, info1);
-
-					// pr_info("svm->vmcb->control.exit_int_info: %x\n", svm->vmcb->control.exit_int_info);
-					// pr_info("svm->vmcb->control.exit_int_info_err: %x\n", svm->vmcb->control.exit_int_info_err);
-					// "This field is filled in only during data page faults. Instruction-fetch page faults provide no additional information."
-					// pr_info("svm->vmcb->control.insn_len: %u\n", svm->vmcb->control.insn_len);
-					// pr_info("svm->vmcb->control.insn_bytes: {0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X, 0x%X}\n", svm->vmcb->control.insn_bytes[0], svm->vmcb->control.insn_bytes[1], svm->vmcb->control.insn_bytes[2], svm->vmcb->control.insn_bytes[3], svm->vmcb->control.insn_bytes[4], svm->vmcb->control.insn_bytes[5], svm->vmcb->control.insn_bytes[6], svm->vmcb->control.insn_bytes[7], svm->vmcb->control.insn_bytes[8], svm->vmcb->control.insn_bytes[9], svm->vmcb->control.insn_bytes[10], svm->vmcb->control.insn_bytes[11], svm->vmcb->control.insn_bytes[12], svm->vmcb->control.insn_bytes[13], svm->vmcb->control.insn_bytes[14]);
-					break;
-				case SVM_EXIT_INTR:
-					pr_info("snp_helper/patch/arch/x86/kvm/svm/svm.c svm_vcpu_enter_exit: svm->vmcb->control.exit_code: SVM_EXIT_INTR\n");
-					continue;
-				default:
-					pr_info("snp_helper/patch/arch/x86/kvm/svm/svm.c svm_vcpu_enter_exit: svm->vmcb->control.exit_code: %d\n", svm->vmcb->control.exit_code);
-					pr_info("svm->vmcb->control.exit_code: 0x%x\n", svm->vmcb->control.exit_code);
-					// pr_info("svm->vmcb->control.exit_code_hi: %d\n", svm->vmcb->control.exit_code_hi);
-					// pr_info("svm->vmcb->control.exit_info_1: %llx\n", svm->vmcb->control.exit_info_1);
-					// pr_info("svm->vmcb->control.exit_info_2: %llx\n", svm->vmcb->control.exit_info_2);
-					// pr_info("svm->vmcb->control.exit_int_info: %x\n", svm->vmcb->control.exit_int_info);
-					// pr_info("svm->vmcb->control.exit_int_info_err: %x\n", svm->vmcb->control.exit_int_info_err);
-					break;
-			}
-
-			if (svm->vmcb->control.exit_code != SVM_EXIT_NPF)  // we can not break out of the loop inside the switch, thus we need to do it here ...
-			{
-				pr_info("snp_helper/patch/arch/x86/kvm/svm/svm.c svm_vcpu_enter_exit: breaking the loop because not SVM_EXIT_NPF\n");
-				break; // something is off ...
-			}
+			case SVM_EXIT_NPF:  // nested page fault?
+				pr_info("svm->vmcb->control.exit_code: SVM_EXIT_NPF\n");
+				break;
+			case SVM_EXIT_SHUTDOWN:
+				pr_info("svm->vmcb->control.exit_code: SVM_EXIT_SHUTDOWN\n");
+				break;
+			case SVM_EXIT_INTR:  // interrupt?
+				pr_info("snp_helper/patch/arch/x86/kvm/svm/svm.c svm_vcpu_enter_exit: svm->vmcb->control.exit_code: SVM_EXIT_INTR\n");
+				break;
+			default:  // something else ...
+				pr_info("svm_vcpu_enter_exit: svm->vmcb->control.exit_code: %x\n", svm->vmcb->control.exit_code);
+				break;
 		}
-	} else
+	}
+	else
+	{
 		__svm_vcpu_run(svm, spec_ctrl_intercepted);
+	}
 
 	guest_state_exit_irqoff();
 }
+
 
 static __no_kcsan fastpath_t svm_vcpu_run(struct kvm_vcpu *vcpu)
 {

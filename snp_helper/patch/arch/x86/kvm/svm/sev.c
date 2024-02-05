@@ -34,10 +34,7 @@
 #include "cpuid.h"
 #include "trace.h"
 
-#include "snp_helper.h"
-
-// yes this is weird, I know ...
-#include "snp_helper.c"
+#include "snp_helper_kernel.h"
 
 #ifndef CONFIG_KVM_AMD_SEV
 /*

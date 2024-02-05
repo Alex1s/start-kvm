@@ -30,7 +30,7 @@ static uint8_t guest_code[GUEST_MEMORY_SIZE] __attribute__((aligned(GUEST_MEMORY
 
 #define DEFAULT_SEV_SNP_POLICY  0x30000 // source: /mnt/data/AMDSEV-DOCKER/AMDSEV/qemu/target/i386/sev.c
 
-int main()
+int run_vm(void)
 {
     int kvm_fd = -1;
     int error = 0;
@@ -375,5 +375,14 @@ int main()
     else
     {
         return EXIT_SUCCESS;
+    }
+}
+
+int main()
+{
+    size_t i;
+    for (i = 0; i < 1; i++)
+    {
+        run_vm();
     }
 }
